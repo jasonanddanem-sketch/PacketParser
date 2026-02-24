@@ -1,6 +1,6 @@
-# PacketParser - FFXI Trust Data Collector
+# PacketParser - FFXI Retail Data Collector
 
-A Windower 4 addon that captures trust behavior data from retail FFXI by parsing action packets in real-time. Outputs structured JSON files that can be used to fix trust implementations on private servers (LSB).
+A Windower 4 addon that passively captures game data from retail FFXI. Tracks **trusts**, **mobs/NMs**, and **zone spawn tables** by parsing packets in real-time. Outputs structured JSON files for fixing private server (LSB) implementations.
 
 ## Installation
 
@@ -11,84 +11,108 @@ Load in-game:
 //lua load PacketParser
 ```
 
-## Usage
+## What It Captures
 
-The addon starts tracking automatically when loaded. Just play normally with trusts in your party.
+The addon runs passively — just play normally and it records everything happening around you.
 
-### Commands
+### Trusts (party NPCs)
+- Weapon skills (ID, name, animation, damage samples)
+- Spells (ID, name, animation, usage count)
+- Job abilities, dances, runes
+- Melee/ranged animation IDs
+- Additional effects (enspells, procs)
 
+### Mobs & NMs (any NPC in the zone)
+- TP moves (ID, name, animation, damage)
+- Spells cast
+- Melee/ranged animations
+- Damage taken from players (for HP estimation)
+- First/last seen timestamps
+
+### Zone Spawn Tables
+- Every NPC/mob entity that loads in each zone
+- Model IDs
+- Position data (for patrol route mapping)
+- Entity counts
+
+**You don't have to fight anything** — the addon captures packets from all fights happening around you. Other players fighting NMs nearby generate data you can use.
+
+## Commands
+
+### Tracking
 | Command | Description |
 |---|---|
 | `//pp start` | Start tracking (on by default) |
-| `//pp stop` | Stop tracking and save data |
-| `//pp status` | Show active trusts being tracked |
-| `//pp report` | Summary of all collected data |
-| `//pp detail <name>` | Detailed breakdown for one trust |
+| `//pp stop` | Stop tracking and save |
+| `//pp status` | Show active tracking status |
+
+### Reports
+| Command | Description |
+|---|---|
+| `//pp report` | Trust data summary |
+| `//pp report mobs` | Mob data summary (grouped by zone) |
+| `//pp report zones` | Zone spawn table summary |
+| `//pp detail <name>` | Detailed view of any trust or mob |
+| `//pp zone` | List all entities in current zone |
+
+### Data Management
+| Command | Description |
+|---|---|
 | `//pp save` | Force save all data now |
 | `//pp scan` | Re-scan party for trusts |
-| `//pp reset` | Clear all collected data |
-| `//pp help` | Show help |
+| `//pp reset` | Clear trust data |
+| `//pp reset mobs` | Clear mob data |
+| `//pp reset all` | Clear everything |
 
-### What It Captures
+## Output Structure
 
-For each trust in your party, the addon records:
+```
+PacketParser/data/
+  _summary.json          Master summary of all captured data
+  trusts/
+    Zeid_II.json         Per-trust action data
+    Apururu.json
+  mobs/
+    Jugner_Forest/
+      Jaggedy-Eared_Jack.json    Per-mob action data (organized by zone)
+      Forest_Hare.json
+    La_Theine_Plateau/
+      Battering_Ram.json
+  zones/
+    Jugner_Forest.json   Complete entity spawn table for the zone
+    La_Theine_Plateau.json
+```
 
-- **Weapon Skills** - ID, name, animation ID, usage count, damage samples
-- **Spells** - ID, name, animation ID, usage count
-- **Job Abilities** - ID, name, animation ID, usage count
-- **Melee/Ranged Animations** - Animation IDs for auto-attacks
-- **Dances** - Steps, waltzes, flourishes (for DNC trusts)
-- **Runes** - Wards and effusions (for RUN trusts)
-- **Additional Effects** - Enspell procs, defense down, etc.
-
-### Output
-
-Data is saved as JSON files in `PacketParser/data/`:
-
-- One file per trust (e.g., `Zeid_II.json`)
-- `_summary.json` - overview of all captured trusts
-- Auto-saves every 60 seconds
-
-### Example Output
+## Example Mob Output
 
 ```json
 {
-  "name": "Zeid II",
-  "model_id": 927,
-  "total_samples": 142,
-  "weapon_skills": [
+  "name": "Jaggedy-Eared Jack",
+  "zone": "Jugner Forest",
+  "zone_id": 104,
+  "total_samples": 45,
+  "times_seen": 3,
+  "tp_moves": [
     {
-      "id": 30,
-      "name": "Ground Strike",
-      "animation_id": 63,
-      "count": 12,
-      "damage_samples": [450, 380, 520, 410]
+      "id": 320,
+      "name": "Foot Kick",
+      "animation_id": 41,
+      "count": 8,
+      "damage_samples": [120, 95, 140, 110]
     }
   ],
-  "spells": [
-    {
-      "id": 260,
-      "name": "Stun",
-      "animation_id": 27,
-      "count": 8
-    }
-  ]
+  "spells": [],
+  "damage_taken": [250, 300, 180, 420, 500],
+  "total_damage_recorded": 1650
 }
 ```
 
-## Tips for Data Collection
+## Tips
 
-1. **Summon trusts one at a time** for cleanest data attribution
-2. **Fight mobs that last a while** so trusts cycle through their full ability sets
-3. **5-10 fights minimum** per trust to capture their full rotation
-4. **Vary conditions** - let HP drop for healer behavior, fight groups for AoE, fight undead for element-specific casters
-5. **Leave it running** during normal play sessions to accumulate data passively
-
-## How the Data Gets Used
-
-After collecting data, the JSON files can be compared against private server (LSB) trust scripts to identify:
-
-- Wrong weapon skills (trust uses WS X on retail but WS Y on the server)
-- Missing spells in the trust's spell list
-- Wrong animation IDs causing visual glitches
-- Incorrect ability priorities/frequencies
+- **Just play normally** with the addon loaded — it captures everything passively
+- **Zone spawn tables** build automatically as you zone in — every entity that loads is recorded
+- **NM data** is captured even if someone else is fighting it — you just need to be in the zone
+- **Mob HP estimation** works by summing all damage dealt to a mob during observed fights
+- Data auto-saves every 60 seconds and on zone change/logout
+- Run `//pp report mobs` to see which mobs/NMs you've captured data for
+- Run `//pp zone` to see what entities are in your current zone (compare against your server's spawn tables)

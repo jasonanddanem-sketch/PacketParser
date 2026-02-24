@@ -2,103 +2,147 @@
 
 ## What This Is
 
-A Windower 4 addon that runs on **retail FFXI** to capture trust behavior data via packet parsing. The goal is to collect accurate trust data (weapon skills, spells, animations, job abilities) from retail and use it to fix inaccurate trust implementations on a private server running **LandSandBoat (LSB)**.
+A Windower 4 addon that runs on **retail FFXI** to passively capture game data via packet parsing. It tracks **three categories** of data:
+
+1. **Trusts** - WS, spells, JA, animation IDs (for fixing LSB trust scripts)
+2. **Mobs/NMs** - TP moves, spells, animations, HP estimation (for fixing LSB mob data)
+3. **Zone spawn tables** - every entity that loads in each zone with positions (for fixing LSB spawn tables)
+
+The goal is to collect accurate retail data and use it to fix inaccurate implementations on a private server running **LandSandBoat (LSB)**.
 
 ## The Problem
 
-LSB's trust implementations are often inaccurate compared to retail FFXI:
-- Trusts use wrong weapon skills
-- Trusts have wrong or missing spells in their spell lists
-- Animation IDs are incorrect causing visual glitches
-- AI behavior (when to WS, when to heal, spell priority) doesn't match retail
+LSB is inaccurate compared to retail in many areas:
+- Trusts use wrong weapon skills, wrong spells, wrong animations
+- Mob TP move lists are incomplete or wrong
+- Mob spell lists don't match retail
+- Some mobs/NMs that exist on retail are missing from LSB spawn tables entirely
+- NM behavior (which TP moves they use, HP thresholds) is guessed
 - LSB is a volunteer project matching a moving target (retail still gets updates)
 
 ## The Pipeline
 
 ```
-1. Play retail FFXI with PacketParser addon running
-2. Addon captures action packets (0x028) from trust entities
-3. Structured JSON files are saved per trust (data/ directory)
-4. Compare JSON data against LSB trust scripts
-5. Update LSB Lua scripts to match retail behavior
+1. Play retail FFXI with PacketParser addon loaded (just play normally)
+2. Addon passively captures:
+   - Action packets (0x028) from trusts AND mobs
+   - Entity spawn packets (0x00E) for zone spawn tables
+   - Player damage to mobs (for HP estimation)
+3. Structured JSON files saved automatically:
+   - data/trusts/  -> per-trust action data
+   - data/mobs/    -> per-mob action data (organized by zone)
+   - data/zones/   -> zone entity spawn tables
+4. Compare JSON data against LSB scripts/DB
+5. Update LSB to match retail
 ```
 
 ## How the Addon Works
 
-- Registers for incoming packet event on packet ID 0x028 (action packet)
-- Identifies trusts by scanning party members that are NPCs (is_npc flag)
-- Parses the bit-packed action packet structure to extract:
-  - Actor ID (which trust performed the action)
-  - Category (melee=1, ranged=2, weapon_skill=3, magic=4, job_ability=6, dance=14, rune=15)
-  - Param (the WS ID, spell ID, or ability ID depending on category)
-  - Animation ID (the exact animation the server tells the client to play)
-  - Damage/healing values
-  - Additional effects (enspells, procs)
-- Resolves IDs to human-readable names using Windower's resource tables
-- Saves JSON per trust + a _summary.json index file
-- Auto-saves every 60 seconds, also saves on logout and //pp stop
+### Entity Classification
+Every entity that acts or spawns is classified:
+- **Trust**: is_npc AND in player's party -> tracked for WS/spell/JA data
+- **Mob**: is_npc AND NOT in party -> tracked for TP moves/spells
+- **Player**: not is_npc -> only used to track damage dealt TO mobs
+
+### Packets Captured
+- **0x028 (Action)** - All combat actions: melee, WS, magic, JA, TP moves
+- **0x00E (Entity Spawn/Update)** - Entity appearance in zone, used for spawn tables and position tracking
+
+### Key Features
+- Passive capture: records ALL action packets in the zone, not just from your fights
+- Mob HP estimation: sums damage dealt by players to mobs during observed fights
+- Zone spawn tables: every entity that loads is recorded with model ID and position
+- Position dedup: only records new positions if >5 yalms from any previous position (for patrol routes)
+- Auto-saves every 60 seconds + on zone change + on logout
+- Data organized by zone for mobs, making it easy to compare against LSB zone-by-zone
+
+### You Don't Have to Fight Everything
+The addon captures packets from ALL fights in your zone. If someone else is fighting an NM across the zone, you get their action packets. Just being present is enough.
+
+Also, the zone spawn table builds just by loading into a zone. Every mob that renders in your client generates a 0x00E packet — even if it's standing there doing nothing. This means you get a complete entity list just by walking through zones.
 
 ## Commands
 
+### Tracking
 - `//pp start` / `//pp stop` - toggle tracking
-- `//pp status` - show active trusts being tracked
-- `//pp report` - summary of all collected data
-- `//pp detail <name>` - detailed view of one trust
+- `//pp status` - show zone, active trust/mob counts
+
+### Reports
+- `//pp report` - trust summary
+- `//pp report mobs` - mob summary grouped by zone
+- `//pp report zones` - zone spawn table summary
+- `//pp detail <name>` - detailed view of any trust or mob (searches both)
+- `//pp zone` - list all entities seen in current zone
+
+### Data
 - `//pp save` - force save
-- `//pp scan` - manually re-scan party for trusts
-- `//pp reset` - clear all data
+- `//pp scan` - re-scan party for trusts
+- `//pp reset` / `//pp reset mobs` / `//pp reset all` - clear data
 
-## Data Collection Checklist
+## Data Collection Guide
 
-For each trust, the player should:
-1. Summon the trust (ideally solo or small group for clean data)
-2. Fight mobs that survive long enough for the trust to use WS and spells (5-10 fights minimum)
-3. Vary conditions:
-   - Let HP drop to trigger healer behavior
-   - Pull multiple mobs for AoE behavior
-   - Fight different mob types (undead, birds, etc.) for element-specific casters
-4. Check `//pp detail <name>` to see if enough data has been captured
-5. Move to the next trust
-
-### Per-Role Focus
-- **Melee DPS**: Let them build TP and WS multiple times, note self-buffs
+### Trusts
+For each trust, summon and fight 5-10 mobs minimum to capture full rotation:
+- **Melee DPS**: Let them TP and WS multiple times
 - **Tanks**: Watch for Provoke, Flash, defensive abilities
-- **WHM/Healers**: Get hurt so they heal, get debuffed so they remove status
+- **WHM/Healers**: Get hurt so they heal; get debuffed so they remove status
 - **BLM/Nukers**: Fight varied elements to see spell selection
-- **BRD/Support**: Note song rotation and which songs they pick
-- **RDM/Hybrid**: Observe when they heal vs nuke vs enfeeble
+- **BRD/Support**: Note song rotation
+- **RDM/Hybrid**: Watch heal vs nuke vs enfeeble decisions
 
-## Where LSB Trust Scripts Live (on the private server)
+### Mobs/NMs
+- **Just be present** in zones — passively captures all fights near you
+- **Popular zones** generate data fast (other players fighting = free data)
+- **Walk through zones** to build spawn tables even without fighting
+- **NMs** are captured the same as regular mobs — no special handling needed
+- **HP estimation** requires observing a mob from full HP to death
 
+### Zone Spawn Tables
+- **Zone into an area** — entities automatically register via 0x00E packets
+- **Walk around** to load entities that are far from the zone entrance
+- **Compare** the resulting zone JSON against your server's spawn tables to find missing mobs
+
+## Where LSB Data Lives (on the private server)
+
+### Trust Scripts
 - Individual trust scripts: `server/scripts/actions/spells/trust/`
 - Gambit AI framework: `server/scripts/globals/gambits.lua`
 - Trust globals: `server/scripts/globals/trust.lua`
-- Database tables: weapon_skills, spell_list, trust-related tables in MariaDB
+- DB tables: weapon_skills, spell_list, trust tables in MariaDB
 
-## What to Do With the Captured Data
+### Mob Data
+- Mob scripts: `server/scripts/zones/<zone_name>/mobs/`
+- Mob spawn tables: DB `mob_spawn_points`, `mob_groups`, `mob_pools`
+- Mob skills: DB `mob_skills`, `mob_skill_lists`
+- NM-specific scripts: same mob scripts directory, with special logic
 
-### Comparing Against LSB
+### Zone Data
+- Zone scripts: `server/scripts/zones/<zone_name>/`
+- Spawn points: DB `mob_spawn_points` table
+- NPC spawns: DB `npc_list` table
 
-For each trust JSON file, compare:
+## How to Use Captured Data
 
-1. **Weapon Skills**: Does the LSB trust script use the same WS IDs? Check the gambit definitions.
-2. **Spell List**: Does the trust have the correct spells in its spell list (DB and Lua)?
-3. **Animation IDs**: Do the animation values in the DB/Lua match what retail sends?
-4. **Ability Usage**: Are job abilities correct and used in the right situations?
+### Trusts: Comparing Against LSB
+1. Open `data/trusts/<TrustName>.json`
+2. Compare weapon_skills list against the trust's gambit definitions in LSB
+3. Compare spells list against the trust's spell list in LSB
+4. Check animation IDs match what the DB/Lua has
+5. Update LSB Lua scripts and/or DB entries to match
 
-### Updating LSB Scripts
+### Mobs: Comparing Against LSB
+1. Open `data/mobs/<ZoneName>/<MobName>.json`
+2. Compare tp_moves list against LSB's `mob_skill_lists` DB entries
+3. Compare spells against mob script's spell list
+4. Check if the mob even exists in LSB's spawn tables
+5. Use damage_taken data to estimate HP and verify against LSB
 
-Most fixes are Lua-side:
-- Edit the trust's spell script in `server/scripts/actions/spells/trust/<trust_name>.lua`
-- Update gambit entries to use correct WS IDs
-- Update spell lists in the trust's initialization
-- Some fixes require DB changes (animation values in weapon_skills or spell tables)
-
-### What Can't Be Fixed Without C++ Source
-
-- If the binary hardcodes or overrides animation IDs in packet construction
-- Low-level AI timing or packet-level behavior
-- The private server uses pre-compiled binaries (xi_map, xi_world, xi_connect, xi_search)
+### Zones: Finding Missing Spawns
+1. Open `data/zones/<ZoneName>.json`
+2. Get list of entities on retail
+3. Compare against LSB's `mob_spawn_points` + `npc_list` for that zone
+4. Any entity on retail but not in LSB = missing spawn
+5. Position data can be used to set correct spawn coordinates
 
 ## Technical Details
 
@@ -121,7 +165,7 @@ Bit fields:
 
     Per action:
       reaction:     5 bits
-      animation:   12 bits  <-- this is the animation ID we want
+      animation:   12 bits  <-- animation ID
       effect:       4 bits  (additional effect flag)
       stagger:      7 bits
       knockback:    3 bits
@@ -154,26 +198,38 @@ Bit fields:
 | 6  | Job Ability | Ability ID |
 | 7  | WS readying (ignored) | WS ID |
 | 8  | Casting start (ignored) | Spell ID |
-| 11 | Monster TP move | Ability ID |
+| 11 | Monster TP move | Monster Ability ID |
 | 13 | Pet ability | Ability ID |
 | 14 | Dance | Step/Waltz/Flourish ID |
 | 15 | Rune | Ward/Effusion ID |
 
+### Monster Abilities
+- Category 11 uses `res.monster_abilities` for name resolution (NOT `res.weapon_skills`)
+- These are the mob-specific TP moves like "Fireball", "Tail Smash", etc.
+- LSB stores these in `mob_skills` and `mob_skill_lists` DB tables
+
+## What Can't Be Fixed Without C++ Source
+
+- Animation IDs hardcoded in binary packet construction
+- Low-level AI timing or packet-level behavior
+- The private server uses pre-compiled binaries (xi_map, xi_world, xi_connect, xi_search)
+
 ## Known Limitations
 
-- First version; the bit-packed parsing may not be 100% accurate for all edge cases
-- All parsing is wrapped in pcall so bad packets are silently skipped
-- Does not capture trust model/appearance data from spawn packets (uses get_mob_by_id instead)
-- Does not track targeting behavior (who the trust targets with heals/nukes)
-- Does not capture interrupted/cancelled actions (only completed ones)
-- Data does not persist across addon reloads (JSON files persist but aren't reloaded)
+- Bit-packed parsing may not be 100% accurate for all edge cases (wrapped in pcall for safety)
+- Does not track targeting behavior (who the trust heals, which mob the BLM nukes)
+- Does not capture interrupted/cancelled actions
+- Data does not persist across addon reloads (JSON files persist but aren't reloaded into memory)
+- HP estimation only works if you observe a mob from spawn/full HP to death
+- Zone spawn tables may be incomplete if you don't walk through the entire zone
 
 ## Future Improvements
 
-- Parse 0x00E entity spawn packets for detailed model/appearance data
 - Track targeting behavior (heals party member X, nukes mob Y)
-- Record TP thresholds (what TP% does the trust WS at)
+- Record TP thresholds (what TP% do trusts WS at)
 - Capture interrupted actions from readying/casting packets
 - Reload previously saved JSON data on addon load
-- Auto-diff tool that compares captured data against LSB Lua scripts
-- Web dashboard for viewing captured data
+- Auto-diff tool comparing captured data against LSB scripts
+- Drop table capture (treasure pool packets)
+- NPC dialog capture
+- Crafting result capture
